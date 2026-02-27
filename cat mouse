@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>AI Survival: Procedural Office</title>
+    <style>
+        :root { --bg: #0d1117; --panel: #161b22; --text: #c9d1d9; --wall: #30363d; --ai: #f85149; --player: #58a6ff; --door: #d29922; --distract: #ab7df8; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; overflow: hidden; }
+        
+        .layout { display: grid; grid-template-columns: 420px 300px 300px; gap: 20px; max-width: 1100px; }
+        
+        #grid { display: grid; grid-template-columns: repeat(10, 40px); grid-template-rows: repeat(10, 40px); gap: 2px; background: #000; padding: 5px; border: 2px solid var(--wall); position: relative; }
+        .cell { width: 40px; height: 40px; background: #1c2128; display: flex; align-items: center; justify-content: center; font-size: 16px; transition: 0.1s; }
+        
+        .wall { background: var(--wall) !important; border-radius: 2px; }
+        .door-locked { background: var(--door) !important; box-shadow: inset 0 0 10px #000; }
+        .distract-node { background: rgba(171, 125, 248, 0.3); border: 1px solid var(--distract); }
+        .ai { background: var(--ai) !important; border-radius: 50%; box-shadow: 0 0 15px var(--ai); z-index: 5; font-size: 10px; color: white; }
+        .player { background: var(--player) !important; box-shadow: 0 0 15px var(--player); z-index: 5; border-radius: 4px; }
+
+        .panel { background: var(--panel); border: 1px solid var(--wall); padding: 15px; border-radius: 8px; }
+        .timer-bar { width: 100%; height: 12px; background: #000; border-radius: 6px; overflow: hidden; margin: 10px 0; border: 1px solid var(--wall); }
+        #timer-fill { height: 100%; width: 100%; background: #2ea043; transition: width 1s linear; }
+        
+        .btn { background: #238636; color: white; border: none; padding: 10px; border-radius: 5px; cursor: pointer; font-weight: bold; width: 100%; margin-top: 5px; }
+        .door-btn { background: var(--door); color: black; }
+        #log { height: 120px; overflow-y: auto; background: #000; font-family: monospace; font-size: 11px; padding: 8px; margin-top: 10px; border: 1px solid var(--wall); color: #8b949e; }
+        kbd { background: #444; padding: 2px 4px; border-radius: 3px; font-size: 10px; }
+    </style>
+</head>
+<body>
+
+    <h1 style="color: var(--player); margin: 0;">OFFICE SURVIVAL: <span id="time-left">60</span>s</h1>
+    <p style="margin-bottom: 20px; font-size: 12px;">Use <kbd>WASD</kbd> or <kbd>Arrows</kbd> to Move | <kbd>Space</kbd> for Door</p>
+
+    <div class="layout">
+        <div class="panel">
+            <div id="grid"></div>
+            <div class="timer-bar"><div id="timer-fill"></div></div>
+            <button id="door-btn" class="btn door-btn" onclick="toggleDoor()">TOGGLE DOOR (Power: <span id="pwr">100</span>%)</button>
+        </div>
+
+        <div class="panel">
+            <h3>ENTITY SENSORS</h3>
+            <p>State: <b id="ai-state" style="color:var(--ai)">SEARCHING</b></p>
+            <p>Mood: <span id="ai-mood">Calm</span></p>
+            <p>Intelligence: <span id="ai-iq">1.0</span></p>
+            <hr style="border:0; border-top:1px solid var(--wall)">
+            <button class="btn" style="background:var(--distract)" onclick="manualDistract()">DEPLOY EMERGENCY LURE</button>
+            <div id="log"></div>
+        </div>
+
+        <div class="panel">
+            <h3>LOGIC LOG</h3>
+            <div id="run-info">
+                <p>Distractions Active: <span id="dist-count">0</span></p>
+                <p>Current Room: <span id="room-id">Alpha</span></p>
+            </div>
+            <canvas id="graph" width="270" height="150" style="margin-top:20px; border:1px solid #444; background:#000;"></canvas>
+        </div>
+    </div>
+
+<script>
+    const SIZE = 10;
+    let aiPos = {x: 0, y: 0}, playerPos = {x: 9, y: 9};
+    let grid = [], state = "STALK", timer = 60, power = 100;
+    let doorPos = {x: 5, y: 5}, doorActive = false;
+    let distractions = [], distractTimer = 0;
+    let iq = 1.0;
+
+    // 1. Procedural Room Generation
+    function generateMap() {
+        grid = Array(SIZE).fill().map(() => Array(SIZE).fill(0));
+        // Random Pillars/Walls
+        for(let i=0; i<18; i++) {
+            let rx = Math.floor(Math.random()*SIZE), ry = Math.floor(Math.random()*SIZE);
+            if((rx !== aiPos.x || ry !== aiPos.y) && (rx !== playerPos.x || ry !== playerPos.y)) {
+                grid[ry][rx] = 1;
+            }
+        }
+        // Random Distractions
+        for(let i=0; i<3; i++) {
+            distractions.push({
+                x: Math.floor(Math.random()*SIZE), 
+                y: Math.floor(Math.random()*SIZE),
+                type: Math.random() > 0.5 ? '📖' : '🖥️'
+            });
+        }
+        // Set central door
+        doorPos = {x: 5, y: Math.floor(Math.random()*SIZE)};
+        grid[doorPos.y][doorPos.x] = 0; 
+    }
+
+    // 2. Player Controls
+    window.addEventListener('keydown', e => {
+        let newX = playerPos.x, newY = playerPos.y;
+        if(e.key === 'ArrowUp' || e.key === 'w') newY--;
+        if(e.key === 'ArrowDown' || e.key === 's') newY++;
+        if(e.key === 'ArrowLeft' || e.key === 'a') newX--;
+        if(e.key === 'ArrowRight' || e.key === 'd') newX++;
+        if(e.key === ' ') toggleDoor();
+
+        if(newX >= 0 && newX < SIZE && newY >= 0 && newY < SIZE && grid[newY][newX] === 0) {
+            if(!(newX === doorPos.x && newY === doorPos.y && doorActive)) {
+                playerPos = {x: newX, y: newY};
+                render();
+            }
+        }
+    });
+
+    function render() {
+        const board = document.getElementById('grid');
+        board.innerHTML = '';
+        for(let y=0; y<SIZE; y++) {
+            for(let x=0; x<SIZE; x++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                if(grid[y][x] === 1) cell.classList.add('wall');
+                if(x === doorPos.x && y === doorPos.y) cell.classList.add('door-locked', doorActive ? 'active' : 'idle');
+                if(!doorActive && x === doorPos.x && y === doorPos.y) cell.style.background = "#222";
+
+                let d = distractions.find(d => d.x === x && d.y === y);
+                if(d) { cell.classList.add('distract-node'); cell.innerHTML = d.type; }
+
+                if(x === aiPos.x && y === aiPos.y) { cell.classList.add('ai'); cell.innerHTML = "👁️"; }
+                if(x === playerPos.x && y === playerPos.y) cell.classList.add('player');
+                board.appendChild(cell);
+            }
+        }
+        document.getElementById('dist-count').innerText = distractions.length;
+    }
+
+    function getPath(start, end) {
+        let q = [[start]], v = new Set([`${start.x},${start.y}`]);
+        while(q.length > 0) {
+            let p = q.shift(), c = p[p.length-1];
+            if(c.x === end.x && c.y === end.y) return p;
+            [[0,1],[0,-1],[1,0],[-1,0]].forEach(([dx,dy])=>{
+                let nx=c.x+dx, ny=c.y+dy;
+                let isDoor = (nx===doorPos.x && ny===doorPos.y && doorActive);
+                if(nx>=0 && nx<SIZE && ny>=0 && ny<SIZE && grid[ny][nx]===0 && !v.has(`${nx},${ny}`) && !isDoor) {
+                    v.add(`${nx},${ny}`); q.push([...p, {x:nx, y:ny}]);
+                }
+            });
+        }
+        return null;
+    }
+
+    function tick() {
+        if(timer <= 0) return endRun("YOU SURVIVED");
+        timer--;
+        document.getElementById('time-left').innerText = timer;
+        document.getElementById('timer-fill').style.width = (timer/60*100) + "%";
+
+        if(doorActive) {
+            power -= 1.5;
+            if(power <= 0) { power = 0; doorActive = false; log("POWER CRITICAL: DOOR OPENED"); }
+            document.getElementById('pwr').innerText = Math.floor(power);
+        }
+
+        if(distractTimer > 0) {
+            distractTimer--;
+            state = "DISTRACTED";
+        } else {
+            // Find closest distraction or player
+            let targets = [...distractions, playerPos];
+            let bestPath = null;
+            let currentTargetName = "Player";
+
+            targets.forEach(t => {
+                let p = getPath(aiPos, t);
+                if(p && (!bestPath || p.length < bestPath.length)) {
+                    bestPath = p;
+                    if(t !== playerPos) currentTargetName = "Interest Point";
+                }
+            });
+
+            if(bestPath && bestPath.length > 1) {
+                aiPos = bestPath[1];
+                state = bestPath.length < 4 ? "RUNNING" : "STALK";
+                
+                // Check if AI reached a distraction
+                let dIdx = distractions.findIndex(d => d.x === aiPos.x && d.y === aiPos.y);
+                if(dIdx !== -1) {
+                    distractTimer = 4;
+                    distractions.splice(dIdx, 1);
+                    log("AI is examining an object...");
+                    iq += 0.2;
+                }
+                if(aiPos.x === playerPos.x && aiPos.y === playerPos.y) return endRun("ENTITY CAUGHT YOU");
+            } else {
+                state = "HUNTING";
+                log("AI is searching for a route...");
+            }
+        }
+
+        document.getElementById('ai-state').innerText = state;
+        document.getElementById('ai-iq').innerText = iq.toFixed(1);
+        render();
+    }
+
+    function toggleDoor() {
+        if(power > 0) {
+            doorActive = !doorActive;
+            log(doorActive ? "Door Locked" : "Door Unlocked");
+        }
+    }
+
+    function manualDistract() {
+        distractions.push({x: Math.floor(Math.random()*SIZE), y: Math.floor(Math.random()*SIZE), type: '📟'});
+        log("Lure deployed into the office.");
+    }
+
+    function log(m) {
+        const l = document.getElementById('log');
+        l.innerHTML = `<div>> ${m}</div>` + l.innerHTML;
+    }
+
+    function endRun(msg) {
+        alert(msg);
+        location.reload();
+    }
+
+    generateMap();
+    setInterval(tick, 1000);
+</script>
+</body>
+</html>
