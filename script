@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Neural Office Architect</title>
+    <style>
+        :root { --bg: #0d1117; --panel: #161b22; --text: #c9d1d9; --wall: #30363d; --ai: #f85149; --player: #58a6ff; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        
+        .header { text-align: center; margin-bottom: 20px; border-bottom: 2px solid var(--ai); padding-bottom: 10px; width: 100%; max-width: 900px; }
+        .container { display: flex; gap: 20px; flex-wrap: wrap; justify-content: center; }
+
+        /* Procedural Grid */
+        #grid { display: grid; grid-template-columns: repeat(10, 40px); grid-template-rows: repeat(10, 40px); gap: 2px; background: #000; padding: 5px; border: 2px solid var(--wall); }
+        .cell { width: 40px; height: 40px; background: #1c2128; display: flex; align-items: center; justify-content: center; font-size: 10px; transition: all 0.2s; }
+        .wall { background: var(--wall) !important; border-radius: 2px; }
+        .door { border: 2px solid #d29922; background: #3e331a; }
+        .player { background: var(--player) !important; box-shadow: 0 0 15px var(--player); z-index: 2; }
+        .ai { background: var(--ai) !important; box-shadow: 0 0 15px var(--ai); border-radius: 50%; z-index: 2; }
+
+        /* UI */
+        .panel { background: var(--panel); border: 1px solid var(--wall); padding: 15px; border-radius: 8px; width: 280px; }
+        #log { height: 180px; overflow-y: auto; background: #000; padding: 10px; font-family: monospace; font-size: 11px; color: #8b949e; border: 1px solid var(--wall); }
+        canvas { background: #000; border: 1px solid var(--wall); margin-top: 10px; width: 100%; }
+        .btn { background: #238636; color: white; border: none; padding: 10px; border-radius: 6px; cursor: pointer; width: 100%; margin-top: 10px; font-weight: bold; }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <h1>OFFICE ARCHITECT <span style="color:var(--ai)">v2.0</span></h1>
+        <small>Procedural Generation vs Neural Pathfinding</small>
+    </div>
+
+    <div class="container">
+        <!-- 1. The Dynamic Grid -->
+        <div class="panel" style="width: 430px;">
+            <div id="grid"></div>
+            <button class="btn" onclick="generateOffice()">GENERATE NEW OFFICE</button>
+        </div>
+
+        <!-- 2. AI Intelligence Stats -->
+        <div class="panel">
+            <h3>LOGIC ENGINE</h3>
+            <div id="stats">
+                <p>State: <b id="st-state" style="color:var(--ai)">IDLE</b></p>
+                <p>Aggression: <b id="st-agg">0</b></p>
+                <p>Office Complexity: <b id="st-comp">0</b></p>
+                <p>Pathfinding Memory: <b id="st-path">0 steps</b></p>
+            </div>
+            <div id="log"></div>
+        </div>
+
+        <!-- 3. The Graph -->
+        <div class="panel">
+            <h3>THREAT INTENSITY</h3>
+            <canvas id="graphCanvas" height="150"></canvas>
+            <p style="font-size: 10px; text-align: center;">Y=Intensity | X=Time</p>
+            <p><small>AI uses BFS to solve the "Architect's" maze.</small></p>
+        </div>
+    </div>
+
+<script>
+    const SIZE = 10;
+    let gridData = [];
+    let aiPos = {x: 0, y: 0};
+    let playerPos = {x: 9, y: 9};
+    let state = "STALK";
+    let agg = 5;
+    let history = [];
+
+    // --- PROCEDURAL GENERATOR ---
+    function generateOffice() {
+        gridData = Array(SIZE).fill().map(() => Array(SIZE).fill(0));
+        let wallCount = 0;
+        
+        for(let i=0; i<25; i++) { // Generate random pillars/walls
+            let rx = Math.floor(Math.random()*SIZE);
+            let ry = Math.floor(Math.random()*SIZE);
+            if((rx!==0 || ry!==0) && (rx!==9 || ry!==9)) {
+                gridData[ry][rx] = 1; // 1 = Wall
+                wallCount++;
+            }
+        }
+        
+        // Ensure entrance and exit aren't blocked
+        gridData[0][0] = 0; gridData[9][9] = 0;
+        aiPos = {x:0, y:0};
+        document.getElementById('st-comp').innerText = wallCount + " Walls";
+        writeLog("Architect: Office procedurally generated.");
+        drawGrid();
+    }
+
+    function drawGrid() {
+        const gridEl = document.getElementById('grid');
+        gridEl.innerHTML = '';
+        for(let y=0; y<SIZE; y++) {
+            for(let x=0; x<SIZE; x++) {
+                const cell = document.createElement('div');
+                cell.className = 'cell';
+                if(gridData[y][x] === 1) cell.classList.add('wall');
+                if(x === aiPos.x && y === aiPos.y) cell.classList.add('ai');
+                if(x === playerPos.x && y === playerPos.y) cell.classList.add('player');
+                gridEl.appendChild(cell);
+            }
+        }
+    }
+
+    // --- BFS PATHFINDING (The "Brain") ---
+    function getNextMove() {
+        let queue = [[aiPos]];
+        let visited = new Set([`${aiPos.x},${aiPos.y}`]);
+        
+        while(queue.length > 0) {
+            let path = queue.shift();
+            let curr = path[path.length-1];
+            
+            if(curr.x === playerPos.x && curr.y === playerPos.y) return path[1];
+
+            [[0,1],[1,0],[0,-1],[-1,0]].forEach(([dx, dy]) => {
+                let nx = curr.x + dx, ny = curr.y + dy;
+                if(nx>=0 && nx<SIZE && ny>=0 && ny<SIZE && gridData[ny][nx]===0 && !visited.has(`${nx},${ny}`)) {
+                    visited.add(`${nx},${ny}`);
+                    queue.push([...path, {x:nx, y:ny}]);
+                }
+            });
+        }
+        return null; // Trapped!
+    }
+
+    // --- SIMULATION TICK ---
+    function tick() {
+        if(state === "ATTACK") {
+            state = "RESET";
+            writeLog("AI reached the player! Resetting...");
+        } else if (state === "RESET") {
+            generateOffice();
+            state = "STALK";
+        } else {
+            if(Math.random() * 20 < agg) {
+                let next = getNextMove();
+                if(next) {
+                    aiPos = next;
+                    let dist = Math.abs(aiPos.x - playerPos.x) + Math.abs(aiPos.y - playerPos.y);
+                    state = dist < 4 ? "RUNNING" : "STALK";
+                    if(dist === 0) state = "ATTACK";
+                    agg += 0.05; // AI learns to be more aggressive
+                } else {
+                    writeLog("AI is trapped by the walls!");
+                    agg += 1; // AI gets frustrated/aggressive when stuck
+                }
+            }
+        }
+        
+        updateUI();
+        drawGrid();
+        updateGraph();
+    }
+
+    function updateUI() {
+        document.getElementById('st-state').innerText = state;
+        document.getElementById('st-agg').innerText = agg.toFixed(1);
+    }
+
+    function writeLog(m) {
+        const l = document.getElementById('log');
+        l.innerHTML = `<div>> ${m}</div>` + l.innerHTML;
+    }
+
+    function updateGraph() {
+        const valMap = { "STALK": 30, "RUNNING": 80, "ATTACK": 140, "RESET": 0 };
+        history.push(valMap[state]);
+        if(history.length > 30) history.shift();
+        
+        const canvas = document.getElementById('graphCanvas');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0,0,300,150);
+        ctx.strokeStyle = "#f85149";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        history.forEach((v, i) => {
+            let x = i * (300/30);
+            let y = 150 - v;
+            if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+        });
+        ctx.stroke();
+    }
+
+    generateOffice();
+    setInterval(tick, 800);
+</script>
+</body>
+</html>
